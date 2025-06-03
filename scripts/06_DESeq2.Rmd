@@ -1,0 +1,263 @@
+---
+title: "killifish_DEseq2"
+author: "Aysevil Pektas"
+output: html_document
+---
+
+# Install DESeq2 - if not before!
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("DESeq2")
+```
+
+# Load packages
+```{r, message=FALSE}
+library(DESeq2)
+library(ggplot2)
+library(dplyr)
+```
+
+# Load and Prepare Data
+- upload data
+- factorize groups
+- change sample names to tissue_age_sex_rep
+
+! Set the path to your working directory where the count data and metadata are located.
+```{r}
+# Load count data and metadata
+count_data <- read.table("../data/gene_count.txt", row.names = 1, header = TRUE)
+metadata <- read.table("../data/metadata.txt", header = TRUE, row.names = 1)
+
+# Clean column names
+colnames(count_data) <- gsub("results.STAR_alignment_clean.sortedByReadName.|_Aligned.sortedByReadName.out.bam", "", colnames(count_data))
+
+# Ensure matching sample names
+count_data <- count_data[, colnames(count_data) %in% rownames(metadata)]
+metadata <- metadata[colnames(count_data), ]
+
+# Convert metadata columns to factors
+metadata$Age <- factor(metadata$Age, levels = c("6w", "16w"))
+metadata$Sex <- factor(metadata$Sex, levels = c("male", "female"))
+metadata$Tissue <- factor(metadata$Tissue, levels = c("Brain", "Heart", "Muscle", "Spleen"))
+
+# Number replicates within each Age-Sex group
+metadata <- metadata %>%
+  group_by(Tissue, Age, Sex) %>%
+  mutate(Replicate = row_number()) %>%
+  ungroup()
+
+# Generate new column names in the format: Age_Sex_Number
+new_colnames <- paste(metadata$Tissue, metadata$Age, metadata$Sex, metadata$Replicate, sep="_")
+
+# Assign new column names to count_data
+colnames(count_data) <- new_colnames
+
+# Keep only relevant metadata columns
+metadata <- metadata %>% dplyr::select(-Replicate)
+
+# Update rownames in metadata
+rownames(metadata) <- new_colnames
+
+# Order metadata by Tissue, Age, and Sex
+metadata <- metadata %>% arrange(Tissue, Age, Sex)
+
+# Reorder count_data columns to match the ordered metadata
+count_data <- count_data[, rownames(metadata)]
+
+# Verify changes
+head(count_data)
+head(metadata)
+
+# Verify data consistency
+stopifnot(all(colnames(count_data) == rownames(metadata)))
+
+print("Data successfully loaded and processed!")
+```
+# Seperate tissue different matrixes 
+```{r}
+# Get unique tissue names
+tissues <- unique(metadata$Tissue)
+
+# Loop through each tissue and save tissue-specific count matrices
+for (tissue in tissues) {
+  # Filter metadata for the current tissue
+  metadata_tissue <- metadata %>% filter(Tissue == tissue)
+  
+  # Ensure column names match the metadata Sample_ID column
+  selected_samples <- rownames(metadata_tissue)
+  
+  # Subset the count matrix for this tissue
+  count_matrix_tissue <- count_data[, selected_samples, drop=FALSE]  # drop=FALSE to keep matrix format
+
+  # Save the tissue-specific count matrix
+  write.table(count_matrix_tissue, file=paste0("../data/counts_uniquelymapped_", tissue, ".txt"), sep="\t", quote=FALSE, col.names=NA)
+  write.table(metadata_tissue, file=paste0("../data/coldata_", tissue, ".txt"), sep="\t", quote=FALSE, col.names=NA)
+  
+  # Print message
+  print(paste("Saved count matrix and colData for", tissue, "with", ncol(count_matrix_tissue), "samples."))
+}
+
+print("All tissue-specific count matrices saved successfully!")
+
+```
+# Tissue-specific data
+```{r}
+# Load count data and metadata
+metadata_brain <- read.table("../data/coldata_Brain.txt", row.names = 1, header = TRUE)
+metadata_heart <- read.table("../data/coldata_Heart.txt", row.names = 1, header = TRUE)
+metadata_muscle <- read.table("../data/coldata_Muscle.txt", row.names = 1, header = TRUE)
+metadata_spleen <- read.table("../data/coldata_Spleen.txt", row.names = 1, header = TRUE)
+
+
+countdata_brain <- read.table("../data/counts_uniquelymapped_Brain.txt", header = TRUE, row.names = 1)
+countdata_heart <- read.table("../data/counts_uniquelymapped_Heart.txt", header = TRUE, row.names = 1)
+countdata_muscle <- read.table("../data/counts_uniquelymapped_Muscle.txt", header = TRUE, row.names = 1)
+countdata_spleen <- read.table("../data/counts_uniquelymapped_Spleen.txt", header = TRUE, row.names = 1)
+
+
+countdata_brain <- subset(countdata_brain, rowSums(countdata_brain[,1:ncol(countdata_brain)] > 5) > 0)
+countdata_heart <- subset(countdata_heart, rowSums(countdata_heart[,1:ncol(countdata_heart)] > 5) > 0)
+countdata_muscle <- subset(countdata_muscle, rowSums(countdata_muscle[,1:ncol(countdata_muscle)] > 5) > 0)
+countdata_spleen <- subset(countdata_spleen, rowSums(countdata_spleen[,1:ncol(countdata_spleen)] > 5) > 0)
+
+```
+
+# Full data
+```{r}
+countData <- count_data
+colData <- metadata
+
+# Make sure that count_data and metadata matches by colnames against rownames
+all(colnames(countData) %in% rownames(colData))
+all(colnames(countData) == rownames(colData))
+
+# Check expr dist
+#sumExpr <- rowSums(countData)
+#hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on all samples")
+
+# remove low info rows
+countData <- subset(countData, rowSums(countData[,1:ncol(countData)] > 5) > 0)
+sumExpr <- rowSums(countData)
+hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on all samples")
+
+nrow(countData) # after removing low gene counts
+```
+
+# For tissue specific plots 
+```{r}
+sumExpr <- rowSums(countdata_brain)
+hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on brain samples")
+
+sumExpr <- rowSums(countdata_heart)
+hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on heart samples")
+
+sumExpr <- rowSums(countdata_muscle)
+hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on muscle samples")
+
+sumExpr <- rowSums(countdata_spleen)
+hist( log1p(sumExpr), breaks=30, main="Sum of gene expression values on spleen samples")
+```
+# Create DESeq2 matrix
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = colData,
+                              design = ~ Tissue + Age + Sex)
+
+dds_brain <- DESeqDataSetFromMatrix(countData = countdata_brain,
+                              colData = metadata_brain,
+                              design = ~ Age + Sex)
+
+dds_heart <- DESeqDataSetFromMatrix(countData = countdata_heart,
+                              colData = metadata_heart,
+                              design = ~ Age + Sex)
+
+dds_muscle <- DESeqDataSetFromMatrix(countData = countdata_muscle,
+                              colData = metadata_muscle,
+                              design = ~ Age + Sex)
+
+dds_spleen <- DESeqDataSetFromMatrix(countData = countdata_spleen,
+                              colData = metadata_spleen,
+                              design = ~ Age + Sex)
+```
+
+# Seperate female and male
+```{r}
+dds_female <- dds[, dds$Sex == "female"]
+dds_female$Age <- droplevels(dds_female$Age)
+design(dds_female) <- ~ Age
+
+dds_male <- dds[, dds$Sex == "male"]
+dds_male$Age <- droplevels(dds_male$Age)
+design(dds_male) <- ~ Age
+```
+
+# Run DESeq2
+```{r}
+dds <- DESeq(dds)
+
+dds_female <- DESeq(dds_female)
+dds_male <- DESeq(dds_male)
+
+dds_brain <- DESeq(dds_brain)
+dds_heart <- DESeq(dds_heart)
+dds_muscle <- DESeq(dds_muscle)
+dds_spleen <- DESeq(dds_spleen)
+```
+
+# Results and Save as RDS for shiny APP 
+```{r}
+# Age and sex contrasts in full dataset
+res.age <- results(dds, contrast = c("Age", "16w", "6w"))
+res.sex <- results(dds, contrast = c("Sex", "male", "female"))
+
+saveRDS(res.age, "../shiny_app/data/res_age.rds")
+saveRDS(res.sex, "../shiny_app/data/res_sex.rds")
+
+# Age contrast in sex-specific datasets
+res_age_female <- results(dds_female, contrast = c("Age", "16w", "6w"))
+res_age_male   <- results(dds_male,   contrast = c("Age", "16w", "6w"))
+
+saveRDS(res_age_female, "../shiny_app/data/res_age_female.rds")
+saveRDS(res_age_male,   "../shiny_app/data/res_age_male.rds")
+
+# Brain
+res.age.brain <- results(dds_brain, contrast = c("Age", "16w", "6w"))
+res.sex.brain <- results(dds_brain, contrast = c("Sex", "male", "female"))
+
+saveRDS(res.age.brain, "../shiny_app/data/res_age_brain.rds")
+saveRDS(res.sex.brain, "../shiny_app/data/res_sex_brain.rds")
+
+# Heart
+res.age.heart <- results(dds_heart, contrast = c("Age", "16w", "6w"))
+res.sex.heart <- results(dds_heart, contrast = c("Sex", "male", "female"))
+
+saveRDS(res.age.heart, "../shiny_app/data/res_age_heart.rds")
+saveRDS(res.sex.heart, "../shiny_app/data/res_sex_heart.rds")
+
+# Muscle
+res.age.muscle <- results(dds_muscle, contrast = c("Age", "16w", "6w"))
+res.sex.muscle <- results(dds_muscle, contrast = c("Sex", "male", "female"))
+
+saveRDS(res.age.muscle, "../shiny_app/data/res_age_muscle.rds")
+saveRDS(res.sex.muscle, "../shiny_app/data/res_sex_muscle.rds")
+
+# Spleen
+res.age.spleen <- results(dds_spleen, contrast = c("Age", "16w", "6w"))
+res.sex.spleen <- results(dds_spleen, contrast = c("Sex", "male", "female"))
+
+saveRDS(res.age.spleen, "../shiny_app/data/res_age_spleen.rds")
+saveRDS(res.sex.spleen, "../shiny_app/data/res_sex_spleen.rds")
+```
+
+# Other RDS files needed for the app 
+```{r}
+# Extract normalized counts
+normalized_counts <- as.data.frame(counts(dds, normalized=TRUE))
+
+# Save for Shiny app 
+saveRDS(normalized_counts, "../shiny_app/data/normalized_counts.rds")
+saveRDS(colData, "../shiny_app/data/ColData.rds")
+
+```
+
